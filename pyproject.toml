@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diffpump"
+version = "0.2.0"
+description = "Differentiable Feasibility Pump for general integer and mixed-integer programs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "gurobipy",
+    "pyscipopt",
+    "pyyaml",
+]
+
+[project.scripts]
+diffpump = "diffpump.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["diffpump*"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-timeout"]
