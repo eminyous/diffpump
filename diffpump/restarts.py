@@ -18,6 +18,15 @@ import numpy as np
 _HISTORY_WINDOW   = 20     # rolling window of past rounded solutions
 _P_PERTURB        = 0.3    # per-variable perturbation probability
 
+# Stand-in magnitudes for (semi-)unbounded general integers, matching the
+# reference FeasPumpCollection implementation [32] (src/feaspump.cpp:160-161).
+# A variable whose domain is wider than _BIGBIGM is treated as unbounded; the
+# perturbation then samples a window of half-width _BIGM around the relevant
+# finite bound, or around the current value when both bounds are effectively
+# infinite.
+_BIGM    = 1e9
+_BIGBIGM = 1e15
+
 
 class CycleDetector:
     """
@@ -108,11 +117,12 @@ class Restarter:
                 y[i] = 1.0 - y[i]
             else:
                 lb_i, ub_i = self._lb[i], self._ub[i]
-                domain_size = int(ub_i - lb_i)
-                if domain_size <= 1:
+                span = ub_i - lb_i
+                if np.isfinite(span) and span <= 1:
                     y[i] = lb_i if y[i] == ub_i else ub_i
                 else:
-                    # Random ±1 shift, stay in bounds
+                    # Random ±1 shift, stay in bounds.
+                    # np.clip handles an infinite ub (no upper clamp applied).
                     shift = self._rng.choice([-1, 1])
                     y[i]  = np.clip(y[i] + shift, lb_i, ub_i)
 
@@ -121,8 +131,15 @@ class Restarter:
     def perturb(self, y: np.ndarray) -> np.ndarray:
         """
         Random perturbation: for each variable independently with probability
-        p_perturb, replace yᵢ with a random integer in [lb_i, ub_i].
+        p_perturb, replace yᵢ with a random integer drawn as in the reference
+        FeasPumpCollection restart [32] (src/feaspump.cpp:835-839):
 
+          - bounded domain (ub − lb < _BIGBIGM): uniform integer in [lb, ub];
+          - finite lb, value near it: uniform in the window [lb, lb + 2·_BIGM);
+          - finite ub, value near it: uniform in the window (ub − 2·_BIGM, ub];
+          - fully unbounded: uniform in [yᵢ − _BIGM, yᵢ + _BIGM) around yᵢ.
+
+        The result is floored to keep yᵢ integral and clamped to [lb, ub].
         At least one variable is always perturbed to ensure a change.
         """
         y = y.copy()
@@ -135,8 +152,16 @@ class Restarter:
 
         for i in np.where(mask)[0]:
             lb_i, ub_i = self._lb[i], self._ub[i]
-            new_val = self._rng.integers(int(lb_i), int(ub_i) + 1)
-            y[i] = float(new_val)
+            r = self._rng.random()
+            if (ub_i - lb_i) < _BIGBIGM:          # bounded domain
+                new_val = np.floor(lb_i + (1.0 + ub_i - lb_i) * r)
+            elif (y[i] - lb_i) < _BIGM:           # finite lb, current value near it
+                new_val = np.floor(lb_i + (2.0 * _BIGM - 1.0) * r)
+            elif (ub_i - y[i]) < _BIGM:           # finite ub, current value near it
+                new_val = np.floor(ub_i - (2.0 * _BIGM - 1.0) * r)
+            else:                                 # fully unbounded: window around current value
+                new_val = np.floor(y[i] + (2.0 * _BIGM - 1.0) * r - _BIGM)
+            y[i] = float(np.clip(new_val, lb_i, ub_i))
 
         return y
 
